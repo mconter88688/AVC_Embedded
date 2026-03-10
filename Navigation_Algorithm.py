@@ -1,7 +1,8 @@
 """
-Date: 2/22/2026
+Date: 3/2/2026
 Purpose: Python navigation algorithms, utilizing object detection to navigate an obstacle course consisting of one blue buckets, red two buckets with plywood on top, five yellow buckets, 
          and a ramp. Turn left around blue buckets, trun right around yellow buckets, and go straight through the yellow buckets."""
+
 
 from controller import Robot, Camera, Motor, InertialUnit, PositionSensor
 from ultralytics import YOLO
@@ -56,17 +57,40 @@ CONFIDENCE_THRESHOLD = 0.10
 # Physical properties
 # FOCAL_LENGTH = (pixel_width * distance) / real_width
 REAL_BUCKET_WIDTH = 0.3  # Meter?? 
-FOCAL_LENGTH = 500       # Pixel units 
+
+# In webot, camera'sfocal length not given. So, must calculate pixel
+width = 640  # camera width in pixels
+fov = 0.785  # horizontal field of view in radians
+
+FOCAL_LENGTH = width / (2 * math.tan(fov / 2))     # Pixel units 
+print("Focal length:", FOCAL_LENGTH)
 
 # Navigation Constants
-STOP_DISTANCE = 0.5      # Meter?? 
-BASE_SPEED = 5.0         
-KP = 2.0                 # Runing Value: How aggressively to turn during steering; Too low -> sluggish, too high --> jerky
+STOP_DISTANCE_YELLOW = 2      # Meter?? 
+STOP_DISTANCE_BLUE = 1.5
+STOP_DISTANCE_RED = 1
+
+STOP_DISTANCE = {
+"1": STOP_DISTANCE_YELLOW,
+"2": STOP_DISTANCE_YELLOW,
+"3": STOP_DISTANCE_BLUE,
+"4": STOP_DISTANCE_YELLOW,
+"5": STOP_DISTANCE_YELLOW,
+"6": STOP_DISTANCE_RED,
+"7": STOP_DISTANCE_YELLOW}
+
+MAX_SPEED = min(left_motor.getMaxVelocity(), right_motor.getMaxVelocity())
+BASE_SPEED = 6.28 # Webot MaxVelocity is 6.28. Else, will give warning and clamp it
+KP = 5.0                 # Runing Value: How aggressively to turn during steering; Too low -> sluggish, too high --> jerky
 
 # Calculating offset for steering
-BLUE_OFFSET = -0.3        # Keep bucket on the LEFT side of the image.
-YELLOW_OFFSET = 0.3       # Yellow: We want to pivot Right, so we drive to the Left of it. Keep bucket on the RIGHT side of the image.
+BLUE_OFFSET = -0.5        # Keep bucket on the LEFT side of the image.
+YELLOW_OFFSET = 0.5       # Yellow: We want to pivot Right, so we drive to the Left of it. 
 RED_OFFSET = 0.0          # Red: Drive straight through.
+
+# For scanning. If closer than the threshold, then it's a bucket we most likely already passed
+# Can't equal any of the STOP_DISTANCE or else will fight each other
+MIN_DISTANCE_THRESHOLD = 0.1
 
 # Encoder / wheel placeholders
 TICK_PER_MOTOR = 2 
@@ -77,9 +101,9 @@ WHEEL_CIRCUMFERENCE = 2 * math.pi * WHEEL_RADIUS
 DISTANCE_PER_TICK = WHEEL_CIRCUMFERENCE / TICKS_PER_WHEEL_REVOLUTION
 
 # Distance to drive by after the STOP_DISTANCE
-BLUE_DRIVEPASS_DIST = 1
-YELLOW_DRIVEPASS_DIST = 1
-RED_DRIVEPASS_DIST = 1
+BLUE_DRIVEPASS_DIST = .5
+YELLOW_DRIVEPASS_DIST = 2.1
+RED_DRIVEPASS_DIST = 2.5
 
 # Bucket Logic
 class colors(Enum):
@@ -89,13 +113,13 @@ class colors(Enum):
 
 # Sequence
 COURSE_BUCKET_ORDER = [
-    colors.yellow,
-    colors.yellow,
-    colors.blue,
-    colors.yellow,
-    colors.yellow,
-    colors.red,
-    colors.yellow
+    colors.yellow.value,
+    colors.yellow.value,
+    colors.blue.value,
+    colors.yellow.value,
+    colors.yellow.value,
+    colors.red.value,
+    colors.yellow.value
 ]
 
 # --------------DETECTION FUNCTION-----------------
@@ -114,9 +138,11 @@ def get_bucket_of_certain_color_location(found_buckets, color_id):
         - bucket_detected: True or False, whether bucket is detected
    '''
 
-    if color_id in found_buckets:
+    if not found_buckets:
+        return 0, 0, False
 
-        if color_id == colors.red: # If looking for red, must find two and calculate average distance to get center position
+    else:
+        if color_id == colors.red.value: # If looking for red, must find two and calculate average distance to get center position
             if len(found_buckets) == 2:
                 red1 = found_buckets[0]
                 red2 = found_buckets[1]
@@ -125,20 +151,29 @@ def get_bucket_of_certain_color_location(found_buckets, color_id):
                 avg_width = (red1['x'] + red2['x']) / 2
                 dist = (FOCAL_LENGTH * REAL_BUCKET_WIDTH) / avg_width # Distance based on middle of two red buckets
                 print(f"Bucket detected: Middle_Center_X: {midpoint:.3f}, Distance: {dist}" )
-                return midpoint, dist, True
-            
+                return midpoint, dist, True   
             else: 
                 pass # Something if only can see one bucket
 
         else: # If blue or yellow, find the closest bucket (One with largest bounding box)
-            if found_buckets: # If not empty
-                largest = max(found_buckets, key=lambda b: b['w'])
-                dist = (FOCAL_LENGTH * REAL_BUCKET_WIDTH) / largest['w']
-                print(f"Bucket detected: Center_X: {largest['x']:.3f}, Distance: {dist}" )
-                return largest['x'], dist, True
-    
-    else:
-        return [0, 0, False] 
+            
+            # Get bucket not too close         
+            valid_buckets = []
+            for b in found_buckets:
+                d = (FOCAL_LENGTH * REAL_BUCKET_WIDTH) / b['w']
+                if d > MIN_DISTANCE_THRESHOLD:
+                    valid_buckets.append(b)
+            
+            # Check if we have anything left after filtering
+            if not valid_buckets:
+                print("No valid buckets found (all detected are too close or none found)")
+                return 0, 0, False
+            
+            # Now, find the 'new' max from the valid list
+            largest = max(valid_buckets, key=lambda b: b['w'])
+            dist = (FOCAL_LENGTH * REAL_BUCKET_WIDTH) / largest['w']
+            print(f"Bucket detected: Center_X: {largest['x']:.3f}, Distance: {dist}" )
+            return largest['x'], dist, True
 
 
 def detect_buckets(color_id):    
@@ -155,16 +190,16 @@ def detect_buckets(color_id):
     '''
     image = camera.getImage()
     width, height = camera.getWidth(), camera.getHeight()
-    img = np.frombuffer(image, np.uint8).reshape((width, height, 4))
+    img = np.frombuffer(image, np.uint8).reshape((height, width, 4))
     frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR) # Fix color conversion between YOLO and webot
-    cv2.imshow("Detected Objects", frame)
+    #cv2.imshow("Detected Objects", frame)
     print(f"Processing frame size: {frame.shape}")
     
     resized_frame = cv2.resize(frame, (416, 416)) # Resize
     results = model(resized_frame, conf=CONFIDENCE_THRESHOLD) # Run Model
     scale_x = width / 416
     scale_y = height / 416
-    cv2.waitKey(1)
+    #cv2.waitKey(1)
     
     for result in results:
         bucket_founds = [] # Create an empty list to store classes of object detected
@@ -180,7 +215,7 @@ def detect_buckets(color_id):
                 center_x_scaled = (center_x_pixels / 208) - 1
                 width_pixels = x2 - x1
                 print(f"Bucket detected: Class {predicted_class}, Center_X: {center_x_scaled:.3f}, Width: {width_pixels}, Confidence: {conf:.2f}" )
-                bucket_founds.append({'x': center_x_scaled, 'w': width_pixels})
+                bucket_founds.append({'x': center_x_scaled, 'w': width_pixels,'class': predicted_class})
                 
             # Rescale back to original frame size
                 x1 = int(x1 * scale_x)
@@ -205,8 +240,14 @@ def detect_buckets(color_id):
 def set_motors_speed(left_speed, right_speed):
     '''Run the motors with the given speeds'''
     # Set velocity. Same value -> go forward
+    
+     # Clamp speeds to motor limits; Avoid webot warning
+    left_speed = max(-MAX_SPEED, min(MAX_SPEED, left_speed))
+    right_speed = max(-MAX_SPEED, min(MAX_SPEED, right_speed))
+
     left_motor.setVelocity(left_speed)
     right_motor.setVelocity(right_speed)
+
 
 def stop_motors():
     '''Stops velocity'''
@@ -223,11 +264,11 @@ def steer_toward_bucket(color_id, center_x, base_speed):
     - base_speed: Default speed
     """   
     # Calculate how off we are from desired position and steer accordingly
-    if color_id == colors.blue:
+    if color_id == colors.blue.value:
         target_offset = BLUE_OFFSET
-    elif color_id == colors.yellow:
+    elif color_id == colors.yellow.value:
         target_offset = YELLOW_OFFSET
-    elif color_id == colors.red:
+    elif color_id == colors.red.value:
         target_offset = RED_OFFSET
     else:
         print(f"steer_toward_bucket: Target bucket {color_id} not available")
@@ -236,6 +277,10 @@ def steer_toward_bucket(color_id, center_x, base_speed):
     error = center_x - target_offset
     correction = error * KP
 
+    # AI Assist for preventing spin
+    MAX_CORR = 0.5 * base_speed   # allow at most 50% steering authority
+    correction = max(-MAX_CORR, min(MAX_CORR, correction))
+    
     left_speed = base_speed + correction
     right_speed = base_speed - correction
     if left_speed > right_speed:
@@ -261,7 +306,10 @@ def pivot_turn(degree_of_pivot, base_speed):
 
     while robot.step(TIME_STEP) != -1:
         yaw = imu.getRollPitchYaw()[2] # Access new yaw, and compare it to target 
-        error = target - yaw
+        error = math.atan2( # Normalize angle
+            math.sin(target - yaw),
+            math.cos(target - yaw)
+        )
 
         if abs(error) < math.radians(2): # allows tolerance; Provided by ChatGPT
             break
@@ -277,48 +325,58 @@ def pivot_turn(degree_of_pivot, base_speed):
 
     stop_motors()    
 
-def drive_pass(target_distance, base_speed): # Using DC gear motor with built-in encoder? Contionus servo don't have way to measure accurate distance travvled
+def drive_pass(distance, base_speed): # Using DC gear motor with built-in encoder? Contionus servo don't have way to measure accurate distance travvled
     """Drive straight forward for a fixed distance using wheel encoders"""
-    # Start wheel rotation and angle
-    left_start = left_encoder.getValue()
-    right_start = right_encoder.getValue()
-    target_yaw = imu.getRollPitchYaw()[2]
+    print(f"Driving Pass")
+    
+    KP_drivepass = 0.5
+    
+    # Start Time
+    start_time = robot.getTime()
+
+    # Calculate duration
+    linear_velocity = base_speed * WHEEL_RADIUS
+    distance_duration = distance / linear_velocity    
+    # Get compass value from IMU
+    _, _, target_yaw = imu.getRollPitchYaw()
+    
+    while robot.step(TIME_STEP) != -1: # Loop until time exceed duration
+        if robot.getTime() - start_time >= distance_duration:
+             print(f"Stopping. Duration is {robot.getTime() - start_time}. Target duration (seconds) for distance is {distance_duration}")
+             break
+       
+        # Current heading
+        _, _, current_yaw = imu.getRollPitchYaw()
 
 
-    while robot.step(TIME_STEP) != -1:
-        left_now = left_encoder.getValue()
-        right_now = right_encoder.getValue()
+        # Normalize angle difference
+        error = math.atan2(
+            math.sin(target_yaw - current_yaw),
+            math.cos(target_yaw - current_yaw)
+        )
 
-        # Distance= radian angle × radius
-        delta_left = (left_now - left_start) * WHEEL_RADIUS
-        delta_right = (right_now - right_start) * WHEEL_RADIUS
 
-        # Average distance traveled, to factor for potential  difference
-        avg_distance = (delta_left + delta_right) / 2
+        correction = KP_drivepass * error
 
-        # If drove close enough to target distance, then stop. Else, move forward
-        if avg_distance >= target_distance:
-            break
+        left_speed = base_speed - correction
+        right_speed = base_speed + correction
 
-        current_yaw = imu.getRollPitchYaw()[2]  
-        yaw_error = current_yaw - target_yaw
-
-        set_motors_speed(base_speed, base_speed)
+        set_motors_speed(left_speed, right_speed)
 
     stop_motors()
 
 
  # ---------------- MAIN LOGIC ----------------
    
-def toward_bucket(color_id, course_number):
-
+def toward_bucket(color_id, course_number,STOP_DISTANCE):
+    not_found_counter = 0
     while robot.step(TIME_STEP) != -1: # This makes the robot wait for the next frame
-
+        
         # Get center_x and pixel_width if bucket_detected
         center_x, distance, bucket_detected = detect_buckets(color_id) 
 
         if bucket_detected == True:
-            print(f"Distance: {distance}, ")
+            print(f"Course Number: {course_number}, Distance: {distance}")
 
             if distance > STOP_DISTANCE: # If distance still > 1.5 ft (18 inches), continue moving
                 print(f"Driving...{distance}")
@@ -330,40 +388,70 @@ def toward_bucket(color_id, course_number):
 
                 # Drive pass and Pivot Logic
                 # If yellow, pivot (pivot degree varies depedping on what stage)
-                if color_id == colors.yellow:
+                if color_id == colors.yellow.value:
                     if course_number == 1:
                         drive_pass(YELLOW_DRIVEPASS_DIST,BASE_SPEED)
-                        pivot_turn(-80)
+                        pivot_turn(-80,BASE_SPEED)
+                        print("Yellow: Pivoting -80 degrees")
+                        drive_pass(1,BASE_SPEED)
+
                     elif course_number == 2:
                         drive_pass(YELLOW_DRIVEPASS_DIST,BASE_SPEED)
-                        pivot_turn(-60)
+                        pivot_turn(-60,BASE_SPEED)
+                        print("Yellow: Pivoting -60 degrees")
                     elif course_number == 4:
                         drive_pass(YELLOW_DRIVEPASS_DIST,BASE_SPEED)
-                        pivot_turn(-55)
+                        pivot_turn(-55,BASE_SPEED)
+                        print("Yellow: Pivoting -55 degrees")
+                       
                     elif course_number == 5:
                         drive_pass(YELLOW_DRIVEPASS_DIST,BASE_SPEED)
-                        pivot_turn(-60)
+                        pivot_turn(-60,BASE_SPEED)
+                        print("Yellow: Pivoting -60 degrees")
                     elif course_number == 8:
                         drive_pass(YELLOW_DRIVEPASS_DIST,BASE_SPEED)
-                        pivot_turn(-90)
+                        pivot_turn(-90,BASE_SPEED)
+                        print("Yellow: Pivoting -90 degrees")
 
                 # If red, no pivot
-                elif color_id == colors.red:
+                elif color_id == colors.red.value:
                     drive_pass(RED_DRIVEPASS_DIST,BASE_SPEED)
                 
                 # If blue, two drive pass and pivot
-                elif color_id == colors.blue:
+                elif color_id == colors.blue.value:
                     drive_pass(BLUE_DRIVEPASS_DIST,BASE_SPEED)
-                    pivot_turn(90)
+                    pivot_turn(90,BASE_SPEED)
+                    print("Blue: Pivoting 90 degrees")
                     drive_pass(BLUE_DRIVEPASS_DIST,BASE_SPEED)
-                    pivot_turn(100)
+                    pivot_turn(60,BASE_SPEED)
+                    print("Blue: Pivoting 60 degrees")
                     drive_pass(BLUE_DRIVEPASS_DIST,BASE_SPEED)
         
-                print(f"Bucket {color_id}, course numer {course_number} is finished.Moving on bucket {COURSE_BUCKET_ORDER[course_number]}, course number {course_number+1}") 
+                print(f"Bucket {color_id}, course number {course_number} is finished. Moving on bucket {COURSE_BUCKET_ORDER[course_number-1]}, course number {course_number+1}") 
                 break # Move on the next bucket
 
         else:
+            stop_motors()
             print(f"Still scanning for {color_id}...")
+            not_found_counter = not_found_counter + 1
+            
+            if not_found_counter == 5: # Allow for it to just scan straight on without pivoting at first
+                not_found_counter = 0 # Reset
+                
+                pivot_turn(45,BASE_SPEED*.5)
+                print(f"Scanning for {color_id} at 45 degree")
+    
+                center_x, distance, bucket_detected = detect_buckets(color_id)
+                if bucket_detected == True: 
+                    continue
+                
+                # If nothing is found, look the other side
+                pivot_turn(-90,BASE_SPEED*.5)
+                print(f"Scanning for {color_id} at -45 degree (-90 degree)")
+                center_x, distance, bucket_detected = detect_buckets(color_id)
+                if bucket_detected == True: 
+                    continue
+    
 
 
 def main():
@@ -372,18 +460,33 @@ def main():
     # enumerate gives both the index and the color id
     for index, target_color in enumerate(COURSE_BUCKET_ORDER):
         course_number = index + 1
-        print(f"\n STARTING TASK {course_number}: {target_color.name}")
+        print(f"\n STARTING TASK {course_number}: {target_color}")
 
         # Completing target bucket
-        toward_bucket(target_color.value, course_number)
+        toward_bucket(target_color, course_number, STOP_DISTANCE[str(course_number)])
         
         # Target Task Complete
         print(f"\n TASK {course_number} COMPLETE")
-        time.sleep(1.0) 
 
 
     print("ALL TASKS FINISHED. STOPPING.")
     stop_motors()
-    cv2.destroyAllWindows()
-
+    #cv2.destroyAllWindows()
+    
 main()
+
+
+def test_forward():
+    print(f"forward")
+    while robot.step(TIME_STEP) != -1:
+        set_motors_speed(2, 2) 
+def test_left():
+     print(f"Left")
+     while robot.step(TIME_STEP) != -1:
+        set_motors_speed(0.5, 2) 
+def test_right():
+     print(f"Right")
+     while robot.step(TIME_STEP) != -1:
+        set_motors_speed(2, 0.5)     
+            
+#test_right()
