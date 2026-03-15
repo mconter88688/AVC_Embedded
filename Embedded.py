@@ -60,9 +60,9 @@ class Robot:
         elif name == Devices.RIGHT_MOTORS:
             return Motor(name, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_REVERSE, MAX_SPEED)
         elif name == Devices.IMU:
-            return
+            return IMU(name)
         elif name == Devices.CAMERA:
-            return
+            return Camera(name)
         else:
             raise ValueError("Invalid Device Type")
 
@@ -119,13 +119,6 @@ class Motor(Device):
                 f_pwm.ChangeDutyCycle(0)
                 r_pwm.ChangeDutyCycle(0)
 
-
-import board
-import busio
-import math
-import adafruit_lsm9ds1
-
-
 class Imu(Device):
 
     def __init__(self, name: str):
@@ -158,3 +151,79 @@ class Imu(Device):
         yaw = math.atan2(-mag_y_comp, mag_x_comp)
 
         return (roll, pitch, yaw)
+
+class Camera(Device):
+    def __init__(self, name: str):
+        super().__init__(name)
+
+        # opencv camera object
+        self.cam = None
+
+        # resolution
+        self.width = 640
+        self.height = 480
+
+    def enable(self, timestep):
+        
+        # initialize the Raspberry Pi camera
+        self.cam = Picamera2()
+
+        # configure resolution
+        config = self.cam.create_preview_configuration(
+            main={
+                "size": (self.width, self.height),
+                "format": "RGB888"
+            }
+        )
+
+        self.cam.configure(config)
+
+        # start the camera
+        self.cam.start()
+
+
+    def getImage(self):
+        """
+        capture one frame from the camera
+        """
+
+        # capture frame from camera
+        frame = self.cam.capture_array()
+
+        if frame is None:
+            print("Camera failed to capture image")
+            return None
+
+        # convert the frame to raw bytes
+        image_bytes = frame.tobytes()
+
+        return image_bytes
+
+    def getWidth(self):
+        return self.width
+
+    def getHeight(self):
+        return self.height
+
+    def disable(self):
+        # stop the camera when finished
+
+        if self.cam is not None:
+            self.cam.stop()
+
+    def showVideo(self):
+        """
+        debug function to display camera feed
+        press 'q' to exit
+        """
+
+        while True:
+
+            frame = self.cam.capture_array()
+
+            cv2.imshow("Camera", frame)
+
+            if cv2.waitKey(1) == 113: # 113 is ASCII representation 'q'
+                break
+
+        cv2.destroyAllWindows()
