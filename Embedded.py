@@ -60,7 +60,7 @@ class Robot:
         elif name == Devices.RIGHT_MOTORS:
             return Motor(name, RIGHT_MOTOR_FORWARD, RIGHT_MOTOR_REVERSE, MAX_SPEED)
         elif name == Devices.IMU:
-            return IMU(name)
+            return Imu(name)
         elif name == Devices.CAMERA:
             return Camera(name)
         else:
