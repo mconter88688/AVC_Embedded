@@ -22,9 +22,9 @@ import board
 import busio
 import math
 import adafruit_lsm9ds1
-import RPi.GPIO as GPIO
 import time
 from picamera2 import Picamera2
+from gpiozero import PWMOutputDevice
 import cv2
 
 LEFT_MOTOR_1_FORWARD = 24 #18
@@ -76,50 +76,40 @@ class Device:
 class Motor(Device):
     def __init__(self,name, forward_gpio, reverse_gpio, MAX_SPEED):
         
-        GPIO.setmode(GPIO.BCM)
+        
         
         self.forward_gpio = forward_gpio
         self.reverse_gpio = reverse_gpio
         self.MAX_SPEED = MAX_SPEED
 
-        self.forward_pwm = []
-        self.reverse_pwm = []
+        self.forward_pwm = [
+            PWMOutputDevice(pin, frequency=1000) for pin in forward_gpio
+        ]
+        self.reverse_pwm = [
+            PWMOutputDevice(pin, frequency=1000) for pin in reverse_gpio
+        ]
 
-        for pin in self.forward_gpio:
-            GPIO.setup(pin, GPIO.OUT)
-            pwm = GPIO.PWM(pin, 1000)
-            pwm.start(0)
-            self.forward_pwm.append(pwm)
-
-        for pin in self.reverse_gpio:
-            GPIO.setup(pin, GPIO.OUT)
-            pwm = GPIO.PWM(pin, 1000)
-            pwm.start(0)
-            self.reverse_pwm.append(pwm)
 
     def setPosition(self, position_value: float):
         pass
     def setVelocity(self, velocity_value: float):
         velocity = max(min(velocity_value, self.MAX_SPEED), -self.MAX_SPEED)
-        duty_cycle = abs(velocity) / self.MAX_SPEED * 100
+        duty_cycle = abs(velocity) / self.MAX_SPEED
 
         if velocity > 0:
-
             for f_pwm, r_pwm in zip(self.forward_pwm, self.reverse_pwm):
-                f_pwm.ChangeDutyCycle(duty_cycle)
-                r_pwm.ChangeDutyCycle(0)
+                f_pwm.value = duty_cycle
+                r_pwm.value = 0
 
         elif velocity < 0:
-
             for f_pwm, r_pwm in zip(self.forward_pwm, self.reverse_pwm):
-                f_pwm.ChangeDutyCycle(0)
-                r_pwm.ChangeDutyCycle(duty_cycle)
+                f_pwm.value = 0
+                r_pwm.value = duty_cycle
 
         else:
-
             for f_pwm, r_pwm in zip(self.forward_pwm, self.reverse_pwm):
-                f_pwm.ChangeDutyCycle(0)
-                r_pwm.ChangeDutyCycle(0)
+                f_pwm.value = 0
+                r_pwm.value = 0
 
 class Imu(Device):
 
