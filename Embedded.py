@@ -17,7 +17,22 @@
 #  - .getRollPitchYaw()[2]
 # - .getValue()
 
+'''
+INSTRUCTIONS ON SCPING THINGS:
+1. first ssh into the pi: ssh avc@172.20.10.12
+2. cd into the AVC_Embedded folder
+3. open a new terminal window not ssh-ed into
+4. cd into the AVC_Embedded folder into the nurobotics folder
+5. then scp a folder INTO the pi via the following commands:
 
+if scping a file: in the below example, you need to be inside the AVC_Embedded directory. youll scp the embedded.py file into the pi
+
+scp Embedded.py avc@172.20.10.12:~/Documents/embedded_2026/nurobotics/AVC_Embedded/
+
+
+
+
+'''
 import board
 import busio
 import math
@@ -29,10 +44,10 @@ import cv2
 
 LEFT_MOTOR_1_FORWARD = 24 #18
 LEFT_MOTOR_1_REVERSE = 10 #19
-LEFT_MOTOR_2_FORWARD = 13
-LEFT_MOTOR_2_REVERSE = 14
-RIGHT_MOTOR_1_FORWARD = 15
-RIGHT_MOTOR_1_REVERSE = 16
+LEFT_MOTOR_2_FORWARD = 23
+LEFT_MOTOR_2_REVERSE = 22
+RIGHT_MOTOR_1_FORWARD = 14
+RIGHT_MOTOR_1_REVERSE = 15
 RIGHT_MOTOR_2_FORWARD = 17
 RIGHT_MOTOR_2_REVERSE = 18
 
