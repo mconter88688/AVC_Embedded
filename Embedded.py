@@ -173,38 +173,72 @@ class Camera(Device):
     def enable(self, timestep):
         
         # initialize the Raspberry Pi camera
-        self.cam = Picamera2()
+        self.cam = cv2.VideoCapture(0)
+        
+        # Set resolution to 1080p (optional but recommended for USBFHD04H)
+        self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
 
-        # configure resolution
-        config = self.cam.create_preview_configuration(
-            main={
-                "size": (self.width, self.height),
-                "format": "RGB888"
-            }
-        )
+        # Check if initialized
+        if not self.cam.isOpened():
+            print("Cannot open camera")
+            exit()
 
-        self.cam.configure(config)
 
-        # start the camera
-        self.cam.start()
+
+        # self.cam = Picamera2()
+        # # configure resolution
+        # config = self.cam.create_preview_configuration(
+        #     main={
+        #         "size": (self.width, self.height),
+        #         "format": "RGB888"
+        #     }
+        # )
+
+        # self.cam.configure(config)
+
+        # # start the camera
+        # self.cam.start()
 
 
     def getImage(self):
         """
         capture one frame from the camera
         """
-
-        # capture frame from camera
-        frame = self.cam.capture_array()
-
-        if frame is None:
-            print("Camera failed to capture image")
-            return None
-
-        # convert the frame to raw bytes
+        image_captured = False
+        while not image_captured:
+            ret, frame = self.cam.read()
+            if ret:
+                image_captured = True
         image_bytes = frame.tobytes()
-
         return image_bytes
+        
+        
+        
+        '''
+            cv2.imshow('USBFHD04H Feed', frame)
+            
+            # Press 'q' to exit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        # Clean up
+        self.cam.release()
+        cv2.destroyAllWindows() '''
+        
+    #! JORDAN CODE ==============
+        # # capture frame from camera
+        # frame = self.cam.capture_array()
+
+        # if frame is None:
+        #     print("Camera failed to capture image")
+        #     return None
+
+        # # convert the frame to raw bytes
+        # image_bytes = frame.tobytes()
+
+        # return image_bytes
+        #!=======================
 
     def getWidth(self):
         return self.width
